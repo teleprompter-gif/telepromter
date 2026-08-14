@@ -1,0 +1,11 @@
+{
+  "name": "Teleprompter",
+  "short_name": "Teleprompter",
+  "description": "Teleprompter con cámara y grabación de video",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#000000",
+  "theme_color": "#000000"
+}
