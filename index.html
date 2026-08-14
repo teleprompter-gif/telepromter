@@ -1,0 +1,942 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>Teleprompter</title>
+
+<style>
+*{
+  box-sizing:border-box;
+}
+
+body{
+  margin:0;
+  background:#000;
+  color:#fff;
+  font-family:Arial,Helvetica,sans-serif;
+  overflow:hidden;
+}
+
+#app{
+  width:100vw;
+  height:100vh;
+  position:relative;
+  background:#000;
+}
+
+/* CÁMARA PRINCIPAL */
+#mainVideo{
+  position:absolute;
+  inset:0;
+  width:100%;
+  height:100%;
+  object-fit:cover;
+  background:#000;
+}
+
+/* CÁMARA SECUNDARIA */
+#pipVideo{
+  position:absolute;
+  top:16px;
+  left:16px;
+  width:28vw;
+  max-width:180px;
+  aspect-ratio:9/16;
+  object-fit:cover;
+  border:2px solid rgba(255,255,255,.8);
+  border-radius:12px;
+  background:#111;
+  z-index:5;
+  display:none;
+}
+
+/* ZONA TELEPROMPTER */
+#prompterBox{
+  position:absolute;
+  top:10%;
+  left:0;
+  width:100%;
+  z-index:10;
+  pointer-events:none;
+}
+
+#line1Wrap{
+  width:100%;
+  overflow:hidden;
+  white-space:nowrap;
+  height:64px;
+  position:relative;
+  background:rgba(0,0,0,.42);
+  display:flex;
+  align-items:center;
+}
+
+#line1{
+  position:absolute;
+  white-space:nowrap;
+  font-size:38px;
+  font-weight:700;
+  line-height:1.2;
+  transform:translateX(100vw);
+  will-change:transform;
+}
+
+#line2{
+  width:100%;
+  min-height:58px;
+  padding:8px 14px;
+  font-size:30px;
+  font-weight:700;
+  line-height:1.25;
+  background:rgba(0,0,0,.58);
+  white-space:normal;
+  overflow:hidden;
+}
+
+.colored{
+  color:#00e5ff;
+}
+
+/* CONTROLES */
+#controls{
+  position:absolute;
+  bottom:0;
+  left:0;
+  width:100%;
+  z-index:20;
+  background:linear-gradient(transparent,rgba(0,0,0,.88));
+  padding:70px 12px 14px;
+}
+
+.controlRow{
+  display:flex;
+  gap:8px;
+  flex-wrap:wrap;
+  justify-content:center;
+  margin-top:8px;
+}
+
+button{
+  border:0;
+  border-radius:10px;
+  padding:10px 14px;
+  font-size:15px;
+  font-weight:700;
+}
+
+.primary{
+  background:#00e676;
+  color:#000;
+}
+
+.danger{
+  background:#ff3b30;
+  color:#fff;
+}
+
+.secondary{
+  background:#fff;
+  color:#000;
+}
+
+textarea{
+  width:100%;
+  height:86px;
+  resize:none;
+  border-radius:10px;
+  padding:10px;
+  font-size:16px;
+}
+
+label{
+  display:flex;
+  align-items:center;
+  gap:7px;
+  font-size:14px;
+}
+
+input[type=range]{
+  width:140px;
+}
+
+#status{
+  text-align:center;
+  font-size:13px;
+  margin-top:6px;
+  color:#ddd;
+}
+
+/* REVISIÓN */
+#review{
+  position:fixed;
+  inset:0;
+  background:#000;
+  z-index:50;
+  display:none;
+  align-items:center;
+  justify-content:center;
+  flex-direction:column;
+}
+
+#reviewCanvas{
+  max-width:100%;
+  max-height:85vh;
+  aspect-ratio:9/16;
+  background:#000;
+}
+
+#closeReview{
+  margin-top:10px;
+}
+</style>
+</head>
+
+<body>
+
+<div id="app">
+
+  <video id="mainVideo" autoplay playsinline muted></video>
+  <video id="pipVideo" autoplay playsinline muted></video>
+
+  <div id="prompterBox">
+    <div id="line1Wrap">
+      <div id="line1"></div>
+    </div>
+    <div id="line2"></div>
+  </div>
+
+  <div id="controls">
+
+    <textarea id="textInput" placeholder="Pega aquí el texto del teleprompter..."></textarea>
+
+    <div class="controlRow">
+      <button id="startCameras" class="secondary">Activar cámaras</button>
+      <button id="swapCamera" class="secondary">Cambiar principal</button>
+    </div>
+
+    <div class="controlRow">
+      <button id="startPrompter" class="primary">Iniciar texto</button>
+      <button id="pausePrompter" class="secondary">Pausa</button>
+      <button id="resetPrompter" class="secondary">Reiniciar</button>
+    </div>
+
+    <div class="controlRow">
+      <label>
+        Velocidad
+        <input id="speed" type="range" min="20" max="200" value="70">
+      </label>
+
+      <label>
+        Tamaño
+        <input id="fontSize" type="range" min="22" max="60" value="38">
+      </label>
+    </div>
+
+    <div class="controlRow">
+      <button id="recordBtn" class="danger">● Grabar</button>
+      <button id="stopBtn" class="secondary" disabled>Detener</button>
+    </div>
+
+    <div id="status">Cámaras apagadas</div>
+
+  </div>
+
+</div>
+
+<div id="review">
+  <canvas id="reviewCanvas" width="720" height="1280"></canvas>
+  <button id="closeReview" class="secondary">Cerrar revisión</button>
+</div>
+
+<script>
+const mainVideo = document.getElementById("mainVideo");
+const pipVideo = document.getElementById("pipVideo");
+
+const line1 = document.getElementById("line1");
+const line2 = document.getElementById("line2");
+
+const textInput = document.getElementById("textInput");
+
+const startCamerasBtn = document.getElementById("startCameras");
+const swapCameraBtn = document.getElementById("swapCamera");
+
+const startPrompterBtn = document.getElementById("startPrompter");
+const pausePrompterBtn = document.getElementById("pausePrompter");
+const resetPrompterBtn = document.getElementById("resetPrompter");
+
+const speedInput = document.getElementById("speed");
+const fontSizeInput = document.getElementById("fontSize");
+
+const recordBtn = document.getElementById("recordBtn");
+const stopBtn = document.getElementById("stopBtn");
+
+const statusText = document.getElementById("status");
+
+const review = document.getElementById("review");
+const reviewCanvas = document.getElementById("reviewCanvas");
+const reviewCtx = reviewCanvas.getContext("2d");
+
+let frontStream = null;
+let rearStream = null;
+
+let mainFacing = "user";
+
+let chunks = [];
+let mediaRecorder = null;
+
+let prompterLines = [];
+let currentIndex = 0;
+
+let animationId = null;
+let startTime = null;
+let paused = false;
+
+let pauseStarted = 0;
+let totalPaused = 0;
+
+let recordingCanvas;
+let recordingCtx;
+let recordingAnimation;
+
+function cleanText(text){
+  return text
+    .replace(/\r/g,"")
+    .replace(/\n+/g," ")
+    .replace(/\s+/g," ")
+    .trim();
+}
+
+function createLines(text,maxChars=48){
+  const words = cleanText(text).split(" ");
+  const result = [];
+
+  let current = "";
+
+  words.forEach(word=>{
+    const candidate = current ? current+" "+word : word;
+
+    if(candidate.length > maxChars && current){
+      result.push(current);
+      current = word;
+    }else{
+      current = candidate;
+    }
+  });
+
+  if(current) result.push(current);
+
+  return result;
+}
+
+async function stopExistingStreams(){
+
+  if(frontStream){
+    frontStream.getTracks().forEach(t=>t.stop());
+    frontStream=null;
+  }
+
+  if(rearStream){
+    rearStream.getTracks().forEach(t=>t.stop());
+    rearStream=null;
+  }
+}
+
+async function activateCameras(){
+
+  await stopExistingStreams();
+
+  statusText.textContent="Solicitando acceso a las cámaras...";
+
+  try{
+
+    frontStream = await navigator.mediaDevices.getUserMedia({
+      video:{
+        facingMode:{ideal:"user"},
+        width:{ideal:1080},
+        height:{ideal:1920}
+      },
+      audio:true
+    });
+
+    mainVideo.srcObject=frontStream;
+
+    try{
+
+      rearStream = await navigator.mediaDevices.getUserMedia({
+        video:{
+          facingMode:{ideal:"environment"},
+          width:{ideal:1080},
+          height:{ideal:1920}
+        },
+        audio:false
+      });
+
+      pipVideo.srcObject=rearStream;
+      pipVideo.style.display="block";
+
+      statusText.textContent="Cámara frontal y trasera activadas";
+
+    }catch(error){
+
+      pipVideo.style.display="none";
+
+      statusText.textContent=
+      "Cámara principal activa. Este navegador no permite usar ambas cámaras a la vez.";
+
+    }
+
+  }catch(error){
+
+    console.error(error);
+
+    statusText.textContent=
+    "No se pudo abrir la cámara. Revisa los permisos del navegador.";
+  }
+}
+
+startCamerasBtn.addEventListener("click",activateCameras);
+
+swapCameraBtn.addEventListener("click",()=>{
+
+  if(!frontStream) return;
+
+  if(!rearStream){
+    statusText.textContent=
+    "La segunda cámara no está disponible simultáneamente en este navegador.";
+    return;
+  }
+
+  if(mainFacing==="user"){
+
+    mainVideo.srcObject=rearStream;
+    pipVideo.srcObject=frontStream;
+
+    mainFacing="environment";
+
+  }else{
+
+    mainVideo.srcObject=frontStream;
+    pipVideo.srcObject=rearStream;
+
+    mainFacing="user";
+  }
+});
+
+function getCarryWords(previous,current){
+
+  if(!previous) return [];
+
+  const prevWords=previous.split(" ");
+
+  const amount=Math.max(
+    1,
+    Math.round(prevWords.length*0.20)
+  );
+
+  return prevWords.slice(-amount);
+}
+
+function renderLines(){
+
+  if(prompterLines.length===0) return;
+
+  const current=prompterLines[currentIndex] || "";
+
+  const next=
+  prompterLines[currentIndex+1] || "";
+
+  line1.innerHTML="";
+
+  const currentWords=current.split(" ");
+
+  const carry=
+  currentIndex>0
+  ? getCarryWords(
+      prompterLines[currentIndex-1],
+      current
+    )
+  : [];
+
+  currentWords.forEach((word,index)=>{
+
+    const span=document.createElement("span");
+
+    span.textContent=word+
+    (index<currentWords.length-1?" ":"");
+
+    if(index<carry.length){
+      span.classList.add("colored");
+    }
+
+    line1.appendChild(span);
+  });
+
+  line2.innerHTML="";
+
+  if(next){
+
+    const carryNext=getCarryWords(current,next);
+
+    carryNext.forEach((word,index)=>{
+
+      const span=document.createElement("span");
+
+      span.className="colored";
+
+      span.textContent=
+      word+" ";
+
+      line2.appendChild(span);
+    });
+
+    const nextSpan=document.createElement("span");
+
+    nextSpan.textContent=next;
+
+    line2.appendChild(nextSpan);
+  }
+}
+
+function startCurrentLine(){
+
+  cancelAnimationFrame(animationId);
+
+  startTime=null;
+  totalPaused=0;
+
+  const containerWidth=
+  document.getElementById("line1Wrap").offsetWidth;
+
+  const textWidth=line1.scrollWidth;
+
+  const startX=containerWidth;
+  const endX=-textWidth;
+
+  function animate(timestamp){
+
+    if(!startTime){
+      startTime=timestamp;
+    }
+
+    if(paused){
+      animationId=requestAnimationFrame(animate);
+      return;
+    }
+
+    const elapsed=
+    timestamp-startTime-totalPaused;
+
+    const pixelsPerSecond=
+    Number(speedInput.value);
+
+    const totalDistance=
+    startX-endX;
+
+    const duration=
+    totalDistance/pixelsPerSecond*1000;
+
+    const progress=
+    Math.min(elapsed/duration,1);
+
+    const x=
+    startX-
+    totalDistance*progress;
+
+    line1.style.transform=
+    `translateX(${x}px)`;
+
+    if(progress<1){
+
+      animationId=
+      requestAnimationFrame(animate);
+
+    }else{
+
+      currentIndex++;
+
+      if(currentIndex<prompterLines.length){
+
+        renderLines();
+        startCurrentLine();
+
+      }else{
+
+        statusText.textContent=
+        "Texto terminado";
+      }
+    }
+  }
+
+  animationId=
+  requestAnimationFrame(animate);
+}
+
+startPrompterBtn.addEventListener("click",()=>{
+
+  const text=textInput.value.trim();
+
+  if(!text){
+    alert("Primero pega un texto.");
+    return;
+  }
+
+  prompterLines=createLines(text);
+
+  currentIndex=0;
+
+  paused=false;
+
+  renderLines();
+
+  startCurrentLine();
+
+  statusText.textContent=
+  "Teleprompter funcionando";
+});
+
+pausePrompterBtn.addEventListener("click",()=>{
+
+  paused=!paused;
+
+  if(paused){
+
+    pauseStarted=performance.now();
+
+    pausePrompterBtn.textContent=
+    "Continuar";
+
+  }else{
+
+    totalPaused+=
+    performance.now()-pauseStarted;
+
+    pausePrompterBtn.textContent=
+    "Pausa";
+  }
+});
+
+resetPrompterBtn.addEventListener("click",()=>{
+
+  cancelAnimationFrame(animationId);
+
+  currentIndex=0;
+
+  paused=false;
+
+  if(prompterLines.length){
+
+    renderLines();
+
+    line1.style.transform=
+    "translateX(100vw)";
+  }
+
+  pausePrompterBtn.textContent="Pausa";
+
+  statusText.textContent=
+  "Teleprompter reiniciado";
+});
+
+fontSizeInput.addEventListener("input",()=>{
+
+  line1.style.fontSize=
+  fontSizeInput.value+"px";
+
+  line2.style.fontSize=
+  Math.max(
+    18,
+    fontSizeInput.value-8
+  )+"px";
+});
+
+function drawCover(
+  ctx,
+  video,
+  x,
+  y,
+  width,
+  height
+){
+
+  const vw=video.videoWidth;
+  const vh=video.videoHeight;
+
+  if(!vw || !vh) return;
+
+  const scale=
+  Math.max(
+    width/vw,
+    height/vh
+  );
+
+  const sw=
+  width/scale;
+
+  const sh=
+  height/scale;
+
+  const sx=
+  (vw-sw)/2;
+
+  const sy=
+  (vh-sh)/2;
+
+  ctx.drawImage(
+    video,
+    sx,sy,sw,sh,
+    x,y,width,height
+  );
+}
+
+function startCompositeRecording(){
+
+  if(!mainVideo.srcObject){
+
+    alert("Primero activa la cámara.");
+
+    return;
+  }
+
+  recordingCanvas=
+  document.createElement("canvas");
+
+  recordingCanvas.width=720;
+  recordingCanvas.height=1280;
+
+  recordingCtx=
+  recordingCanvas.getContext("2d");
+
+  function draw(){
+
+    recordingCtx.fillStyle="#000";
+
+    recordingCtx.fillRect(
+      0,
+      0,
+      recordingCanvas.width,
+      recordingCanvas.height
+    );
+
+    drawCover(
+      recordingCtx,
+      mainVideo,
+      0,
+      0,
+      720,
+      1280
+    );
+
+    if(
+      pipVideo.style.display!=="none" &&
+      pipVideo.videoWidth
+    ){
+
+      const margin=20;
+
+      const pipWidth=180;
+
+      const pipHeight=320;
+
+      recordingCtx.save();
+
+      recordingCtx.beginPath();
+
+      recordingCtx.roundRect(
+        margin,
+        margin,
+        pipWidth,
+        pipHeight,
+        18
+      );
+
+      recordingCtx.clip();
+
+      drawCover(
+        recordingCtx,
+        pipVideo,
+        margin,
+        margin,
+        pipWidth,
+        pipHeight
+      );
+
+      recordingCtx.restore();
+
+      recordingCtx.strokeStyle="white";
+
+      recordingCtx.lineWidth=4;
+
+      recordingCtx.strokeRect(
+        margin,
+        margin,
+        pipWidth,
+        pipHeight
+      );
+    }
+
+    recordingAnimation=
+    requestAnimationFrame(draw);
+  }
+
+  draw();
+
+  const canvasStream=
+  recordingCanvas.captureStream(30);
+
+  const audioTracks=
+  frontStream
+  ? frontStream.getAudioTracks()
+  : [];
+
+  audioTracks.forEach(track=>
+    canvasStream.addTrack(track)
+  );
+
+  let options={};
+
+  if(
+    MediaRecorder.isTypeSupported(
+      "video/webm;codecs=vp9,opus"
+    )
+  ){
+
+    options.mimeType=
+    "video/webm;codecs=vp9,opus";
+
+  }else if(
+    MediaRecorder.isTypeSupported(
+      "video/webm;codecs=vp8,opus"
+    )
+  ){
+
+    options.mimeType=
+    "video/webm;codecs=vp8,opus";
+  }
+
+  chunks=[];
+
+  mediaRecorder=
+  new MediaRecorder(
+    canvasStream,
+    options
+  );
+
+  mediaRecorder.ondataavailable=e=>{
+
+    if(e.data.size>0){
+      chunks.push(e.data);
+    }
+  };
+
+  mediaRecorder.onstop=()=>{
+
+    cancelAnimationFrame(
+      recordingAnimation
+    );
+
+    const blob=
+    new Blob(
+      chunks,
+      {
+        type:
+        mediaRecorder.mimeType ||
+        "video/webm"
+      }
+    );
+
+    showReview(blob);
+  };
+
+  mediaRecorder.start();
+
+  recordBtn.disabled=true;
+  stopBtn.disabled=false;
+
+  statusText.textContent=
+  "Grabando...";
+}
+
+recordBtn.addEventListener(
+  "click",
+  startCompositeRecording
+);
+
+stopBtn.addEventListener(
+  "click",
+  ()=>{
+
+    if(
+      mediaRecorder &&
+      mediaRecorder.state!=="inactive"
+    ){
+
+      mediaRecorder.stop();
+    }
+
+    recordBtn.disabled=false;
+    stopBtn.disabled=true;
+
+    statusText.textContent=
+    "Grabación detenida";
+  }
+);
+
+function showReview(blob){
+
+  review.style.display="flex";
+
+  const url=
+  URL.createObjectURL(blob);
+
+  const player=
+  document.createElement("video");
+
+  player.src=url;
+  player.controls=true;
+  player.autoplay=false;
+  player.playsInline=true;
+
+  player.style.width="100%";
+  player.style.height="100%";
+  player.style.objectFit="contain";
+
+  const old=
+  review.querySelector("video");
+
+  if(old){
+    old.remove();
+  }
+
+  review.insertBefore(
+    player,
+    document.getElementById(
+      "closeReview"
+    )
+  );
+
+  reviewCanvas.style.display="none";
+}
+
+document
+.getElementById("closeReview")
+.addEventListener("click",()=>{
+
+  review.style.display="none";
+
+  const player=
+  review.querySelector("video");
+
+  if(player){
+    player.pause();
+  }
+});
+
+window.addEventListener(
+  "beforeunload",
+  stopExistingStreams
+);
+</script>
+
+</body>
+</html>
